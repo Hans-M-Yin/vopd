@@ -16,8 +16,9 @@ VAL_FILE=${VAL_FILE:-preprocessed_dataset/vopd_smoke/val.parquet}
 
 # ---- small smoke defaults ----
 NNODES=${NNODES:-1}
-NGPUS_PER_NODE=${NGPUS_PER_NODE:-10}
-TEACHER_WORLD_SIZE=${TEACHER_WORLD_SIZE:-2}
+NGPUS_PER_NODE=${NGPUS_PER_NODE:-8}
+TEACHER_NNODES=${TEACHER_NNODES:-1}
+TEACHER_WORLD_SIZE=${TEACHER_WORLD_SIZE:-4}
 
 DISTILLATION_LOSS_MODE=${DISTILLATION_LOSS_MODE:-k1}
 USE_POLICY_GRADIENT=${USE_POLICY_GRADIENT:-True}
@@ -33,7 +34,7 @@ ACTOR_LR=${ACTOR_LR:-1e-6}
 
 ROLLOUT_TP=${ROLLOUT_TP:-1}
 ROLLOUT_GPU_MEM_UTIL=${ROLLOUT_GPU_MEM_UTIL:-0.6}
-TEACHER_TP=${TEACHER_TP:-2}
+TEACHER_TP=${TEACHER_TP:-4}
 TEACHER_GPU_MEM_UTIL=${TEACHER_GPU_MEM_UTIL:-0.8}
 
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-1}
@@ -101,7 +102,7 @@ TRAINER=(
 DISTILLATION=(
     distillation.enabled=True
     distillation.n_gpus_per_node=${TEACHER_WORLD_SIZE}
-    distillation.nnodes=${NNODES}
+    distillation.nnodes=${TEACHER_NNODES}
     distillation.teacher_models.teacher_model.model_path="$TEACHER_MODEL"
     distillation.teacher_models.teacher_model.inference.tensor_model_parallel_size=${TEACHER_TP}
     distillation.teacher_models.teacher_model.inference.name=vllm
