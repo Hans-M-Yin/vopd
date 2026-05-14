@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Single-node smoke test for Qwen3-VL on-policy distillation.
+# Single-node GRPO + OPD smoke test for Qwen3-VL.
 #
-# This keeps the official verl resource layout: one 8-GPU node with a
-# 4-GPU distillation teacher pool. Use this first when only one node is
-# available or when validating the environment before multi-node runs.
+# This is intentionally separate from the pure OPD smoke scripts. It enables
+# group rollouts and task rewards, while keeping OPD as an auxiliary signal.
 
 set -xeuo pipefail
 
@@ -22,6 +21,8 @@ TEACHER_WORLD_SIZE=${TEACHER_WORLD_SIZE:-4}
 
 DISTILLATION_LOSS_MODE=${DISTILLATION_LOSS_MODE:-k1}
 USE_POLICY_GRADIENT=${USE_POLICY_GRADIENT:-True}
+USE_TASK_REWARDS=${USE_TASK_REWARDS:-True}
+DISTILLATION_LOSS_COEF=${DISTILLATION_LOSS_COEF:-0.3}
 DISTILLATION_TOPK=${DISTILLATION_TOPK:-16}
 
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-256}
@@ -32,6 +33,7 @@ PPO_MAX_TOKEN_LEN_PER_GPU=${PPO_MAX_TOKEN_LEN_PER_GPU:-24576}
 
 ACTOR_LR=${ACTOR_LR:-1e-6}
 
+ROLLOUT_N=${ROLLOUT_N:-4}
 ROLLOUT_TP=${ROLLOUT_TP:-1}
 ROLLOUT_GPU_MEM_UTIL=${ROLLOUT_GPU_MEM_UTIL:-0.7}
 TEACHER_TP=${TEACHER_TP:-2}
@@ -43,7 +45,7 @@ TEST_FREQ=${TEST_FREQ:-3}
 
 PROJECT_NAME=${PROJECT_NAME:-vopd}
 DATE=${DATE:-$(date +%m%d)}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-${DATE}_qwen2.5-vl_opd_smoke_single_node}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-${DATE}_qwen2.5-vl_grpo_opd_smoke_single_node}
 LOGGER=${LOGGER:-'["console","wandb"]'}
 EXP_NAME=${EXP_NAME:-${EXPERIMENT_NAME}}
 ROLLOUT_SAVE_PATH="./rollouts_saved/${EXP_NAME}"
@@ -82,7 +84,7 @@ ROLLOUT=(
     actor_rollout_ref.rollout.name=vllm
     actor_rollout_ref.rollout.tensor_model_parallel_size=${ROLLOUT_TP}
     actor_rollout_ref.rollout.gpu_memory_utilization=${ROLLOUT_GPU_MEM_UTIL}
-    actor_rollout_ref.rollout.n=1
+    actor_rollout_ref.rollout.n=${ROLLOUT_N}
     actor_rollout_ref.rollout.max_model_len=${max_num_tokens}
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=True
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${PPO_MAX_TOKEN_LEN_PER_GPU}
@@ -118,7 +120,8 @@ DISTILLATION=(
     distillation.teacher_models.teacher_model.inference.max_model_len=${max_num_tokens}
     distillation.distillation_loss.loss_mode=${DISTILLATION_LOSS_MODE}
     distillation.distillation_loss.topk=${DISTILLATION_TOPK}
-    distillation.distillation_loss.use_task_rewards=False
+    distillation.distillation_loss.use_task_rewards=${USE_TASK_REWARDS}
+    distillation.distillation_loss.distillation_loss_coef=${DISTILLATION_LOSS_COEF}
     distillation.distillation_loss.use_policy_gradient=${USE_POLICY_GRADIENT}
     distillation.distillation_loss.loss_max_clamp=10.0
     distillation.distillation_loss.log_prob_min_clamp=-10.0

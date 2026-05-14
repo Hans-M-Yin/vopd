@@ -46,6 +46,8 @@ PROJECT_NAME=${PROJECT_NAME:-vopd}
 DATE=${DATE:-$(date +%m%d)}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-${DATE}_qwen2.5-vl_opd_smoke}
 LOGGER=${LOGGER:-'["console","wandb"]'}
+EXP_NAME=${EXP_NAME:-${EXPERIMENT_NAME}}
+ROLLOUT_SAVE_PATH="./rollouts_saved/${EXP_NAME}"
 
 max_num_tokens=$(( MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH + 1 ))
 
@@ -92,6 +94,7 @@ TRAINER=(
     trainer.logger=${LOGGER}
     trainer.project_name=${PROJECT_NAME}
     trainer.experiment_name=${EXPERIMENT_NAME}
+    trainer.rollout_data_dir="${ROLLOUT_SAVE_PATH}/train"
     trainer.n_gpus_per_node=${NGPUS_PER_NODE}
     trainer.nnodes=${NNODES}
     trainer.val_before_train=False
