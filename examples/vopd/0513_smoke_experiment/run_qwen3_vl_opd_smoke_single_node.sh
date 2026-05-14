@@ -99,6 +99,11 @@ TRAINER=(
     trainer.total_epochs=${TOTAL_EPOCHS}
 )
 
+REWARD=(
+    reward.custom_reward_function.path=examples/vopd/reward_function.py
+    reward.custom_reward_function.name=compute_score
+)
+
 DISTILLATION=(
     distillation.enabled=True
     distillation.n_gpus_per_node=${TEACHER_WORLD_SIZE}
@@ -122,5 +127,6 @@ python3 -m verl.trainer.main_ppo \
     "${ACTOR[@]}" \
     "${ROLLOUT[@]}" \
     "${TRAINER[@]}" \
+    "${REWARD[@]}" \
     "${DISTILLATION[@]}" \
     "$@"
