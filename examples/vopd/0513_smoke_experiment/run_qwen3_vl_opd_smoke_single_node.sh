@@ -1,25 +1,24 @@
 #!/usr/bin/env bash
-# Smoke test for Qwen3-VL on-policy distillation.
+# Single-node smoke test for Qwen3-VL on-policy distillation.
 #
-# This script intentionally keeps the run tiny. It is meant to validate that
-# the codebase, Python environment, model loading, image data pipeline, rollout,
-# teacher scoring, and actor update can complete a few steps.
-echo ">> line 7"
-# set -xeuo pipefail
-echo ">> line 9"
+# This keeps the official verl resource layout: one 8-GPU node with a
+# 4-GPU distillation teacher pool. Use this first when only one node is
+# available or when validating the environment before multi-node runs.
+
+set -xeuo pipefail
 
 # ---- user-adjustable paths ----
 STUDENT_MODEL=${STUDENT_MODEL:-../models/qwen2.5-vl-7b}
 TEACHER_MODEL=${TEACHER_MODEL:-../models/qwen3-vl-32b}
 
-TRAIN_FILE=${TRAIN_FILE:-../preprocessed_dataset/vopd_smoke/train.parquet}
-VAL_FILE=${VAL_FILE:-../preprocessed_dataset/vopd_smoke/val.parquet}
+TRAIN_FILE=${TRAIN_FILE:-preprocessed_dataset/vopd_smoke/train.parquet}
+VAL_FILE=${VAL_FILE:-preprocessed_dataset/vopd_smoke/val.parquet}
 
-# ---- small smoke defaults ----
+# ---- single-node 8-GPU defaults ----
 NNODES=${NNODES:-1}
 NGPUS_PER_NODE=${NGPUS_PER_NODE:-8}
 TEACHER_NNODES=${TEACHER_NNODES:-1}
-TEACHER_WORLD_SIZE=${TEACHER_WORLD_SIZE:-8}
+TEACHER_WORLD_SIZE=${TEACHER_WORLD_SIZE:-4}
 
 DISTILLATION_LOSS_MODE=${DISTILLATION_LOSS_MODE:-k1}
 USE_POLICY_GRADIENT=${USE_POLICY_GRADIENT:-True}
@@ -34,9 +33,9 @@ PPO_MAX_TOKEN_LEN_PER_GPU=${PPO_MAX_TOKEN_LEN_PER_GPU:-4096}
 ACTOR_LR=${ACTOR_LR:-1e-6}
 
 ROLLOUT_TP=${ROLLOUT_TP:-1}
-ROLLOUT_GPU_MEM_UTIL=${ROLLOUT_GPU_MEM_UTIL:-0.6}
-TEACHER_TP=${TEACHER_TP:-8}
-TEACHER_GPU_MEM_UTIL=${TEACHER_GPU_MEM_UTIL:-0.8}
+ROLLOUT_GPU_MEM_UTIL=${ROLLOUT_GPU_MEM_UTIL:-0.45}
+TEACHER_TP=${TEACHER_TP:-4}
+TEACHER_GPU_MEM_UTIL=${TEACHER_GPU_MEM_UTIL:-0.45}
 
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-1}
 SAVE_FREQ=${SAVE_FREQ:-100000}
@@ -44,8 +43,8 @@ TEST_FREQ=${TEST_FREQ:-1}
 
 PROJECT_NAME=${PROJECT_NAME:-vopd}
 DATE=${DATE:-$(date +%m%d)}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-${DATE}_qwen2.5-vl_opd_smoke}
-LOGGER=${LOGGER:-'["console","wandb"]'}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-${DATE}_qwen2.5-vl_opd_smoke_single_node}
+LOGGER=${LOGGER:-'["console"]'}
 
 max_num_tokens=$(( MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH + 1 ))
 
@@ -116,7 +115,6 @@ DISTILLATION=(
     distillation.distillation_loss.loss_max_clamp=10.0
     distillation.distillation_loss.log_prob_min_clamp=-10.0
 )
-echo ">> line 119"
 
 python3 -m verl.trainer.main_ppo \
     "${DATA[@]}" \
