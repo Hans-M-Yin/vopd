@@ -8,7 +8,7 @@
 set -xeuo pipefail
 
 # ---- user-adjustable paths ----
-STUDENT_MODEL=${STUDENT_MODEL:-../models/qwen2.5-vl-7b}
+STUDENT_MODEL=${STUDENT_MODEL:-../models/qwen3-vl-8b}
 TEACHER_MODEL=${TEACHER_MODEL:-../models/qwen3-vl-32b}
 
 TRAIN_FILE=${TRAIN_FILE:-preprocessed_dataset/vopd_smoke/train.parquet}
