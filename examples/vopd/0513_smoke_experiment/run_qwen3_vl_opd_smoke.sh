@@ -4,21 +4,22 @@
 # This script intentionally keeps the run tiny. It is meant to validate that
 # the codebase, Python environment, model loading, image data pipeline, rollout,
 # teacher scoring, and actor update can complete a few steps.
-
-set -xeuo pipefail
+echo ">> line 7"
+# set -xeuo pipefail
+echo ">> line 9"
 
 # ---- user-adjustable paths ----
 STUDENT_MODEL=${STUDENT_MODEL:-../models/qwen2.5-vl-7b}
 TEACHER_MODEL=${TEACHER_MODEL:-../models/qwen3-vl-32b}
 
-TRAIN_FILE=${TRAIN_FILE:-preprocessed_dataset/vopd_smoke/train.parquet}
-VAL_FILE=${VAL_FILE:-preprocessed_dataset/vopd_smoke/val.parquet}
+TRAIN_FILE=${TRAIN_FILE:-../preprocessed_dataset/vopd_smoke/train.parquet}
+VAL_FILE=${VAL_FILE:-../preprocessed_dataset/vopd_smoke/val.parquet}
 
 # ---- small smoke defaults ----
 NNODES=${NNODES:-1}
 NGPUS_PER_NODE=${NGPUS_PER_NODE:-8}
 TEACHER_NNODES=${TEACHER_NNODES:-1}
-TEACHER_WORLD_SIZE=${TEACHER_WORLD_SIZE:-4}
+TEACHER_WORLD_SIZE=${TEACHER_WORLD_SIZE:-8}
 
 DISTILLATION_LOSS_MODE=${DISTILLATION_LOSS_MODE:-k1}
 USE_POLICY_GRADIENT=${USE_POLICY_GRADIENT:-True}
@@ -115,6 +116,7 @@ DISTILLATION=(
     distillation.distillation_loss.loss_max_clamp=10.0
     distillation.distillation_loss.log_prob_min_clamp=-10.0
 )
+echo ">> line 119"
 
 python3 -m verl.trainer.main_ppo \
     "${DATA[@]}" \
