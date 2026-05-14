@@ -16,7 +16,7 @@ VAL_FILE=${VAL_FILE:-preprocessed_dataset/vopd_smoke/val.parquet}
 
 # ---- single-node 8-GPU defaults ----
 NNODES=${NNODES:-1}
-NGPUS_PER_NODE=${NGPUS_PER_NODE:-8}
+NGPUS_PER_NODE=${NGPUS_PER_NODE:-4}
 TEACHER_NNODES=${TEACHER_NNODES:-1}
 TEACHER_WORLD_SIZE=${TEACHER_WORLD_SIZE:-4}
 
