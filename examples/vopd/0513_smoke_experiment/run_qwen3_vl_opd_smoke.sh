@@ -12,9 +12,8 @@ echo ">> line 9"
 STUDENT_MODEL=${STUDENT_MODEL:-../models/qwen3-vl-8b}
 TEACHER_MODEL=${TEACHER_MODEL:-../models/qwen3-vl-32b}
 
-TRAIN_FILE=${TRAIN_FILE:-../preprocessed_dataset/vopd_smoke/train.parquet}
-VAL_FILE=${VAL_FILE:-../preprocessed_dataset/vopd_smoke/val.parquet}
-
+TRAIN_FILE=${TRAIN_FILE:-../preprocessed_dataset/vopd_qwen3/train.parquet}
+VAL_FILE=${VAL_FILE:-../preprocessed_dataset/vopd_qwen3/val.parquet}
 # ---- small smoke defaults ----
 NNODES=${NNODES:-1}
 NGPUS_PER_NODE=${NGPUS_PER_NODE:-8}
