@@ -7,7 +7,7 @@ import argparse
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
-
+import io
 import pandas as pd
 
 
@@ -20,11 +20,11 @@ NEW_SYSTEM_PROMPT = (
 
 def _update_first_prompt_item(prompt: Any) -> Any:
     """Replace the first prompt item with the target system prompt."""
-    if not isinstance(prompt, list):
-        raise TypeError(f"Expected 'prompt' to be a list, but got {type(prompt).__name__}.")
-    if not prompt:
-        raise ValueError("Expected 'prompt' to contain at least one element.")
-
+    # print(prompt, type(prompt))
+    # if not isinstance(prompt, list):
+    #     raise TypeError(f"Expected 'prompt' to be a list, but got {type(prompt).__name__}.")
+    # if not prompt:
+    #     raise ValueError("Expected 'prompt' to contain at least one element.")
     updated_prompt = deepcopy(prompt)
     first_item = updated_prompt[0]
 
@@ -58,7 +58,11 @@ def rewrite_prompt_column(input_path: Path, output_path: Path, prompt_column: st
 
     dataframe[prompt_column] = dataframe[prompt_column].apply(_update_first_prompt_item)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    dataframe.to_parquet(output_path, engine="pyarrow", index=False)
+    buffer = io.BytesIO()
+    dataframe.to_parquet(buffer, engine="pyarrow", index=False)
+
+    with open(output_path, "wb") as f:
+        f.write(buffer.getvalue())
 
 
 def parse_args() -> argparse.Namespace:

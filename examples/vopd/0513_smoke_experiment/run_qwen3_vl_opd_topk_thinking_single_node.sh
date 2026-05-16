@@ -11,8 +11,8 @@ set -xeuo pipefail
 STUDENT_MODEL=${STUDENT_MODEL:-../models/qwen3-vl-8b}
 TEACHER_MODEL=${TEACHER_MODEL:-../models/qwen3-vl-32b-thinking}
 
-TRAIN_FILE=${TRAIN_FILE:-../preprocessed_dataset/vopd_smoke/train.parquet}
-VAL_FILE=${VAL_FILE:-../preprocessed_dataset/vopd_smoke/val.parquet}
+TRAIN_FILE=${TRAIN_FILE:-../preprocessed_dataset/vopd_qwen3/train.parquet}
+VAL_FILE=${VAL_FILE:-../preprocessed_dataset/vopd_qwen3/val.parquet}
 
 # ---- single-node 8-GPU defaults ----
 NNODES=${NNODES:-1}
