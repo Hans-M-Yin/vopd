@@ -9,11 +9,11 @@ echo ">> line 7"
 echo ">> line 9"
 
 # ---- user-adjustable paths ----
-STUDENT_MODEL=${STUDENT_MODEL:-../models/qwen3-vl-8b}
-TEACHER_MODEL=${TEACHER_MODEL:-../models/qwen3-vl-32b}
+STUDENT_MODEL=${STUDENT_MODEL:-/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/models/qwen3-vl-8b}
+TEACHER_MODEL=${TEACHER_MODEL:-/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/models/qwen3-vl-32b}
 
-TRAIN_FILE=${TRAIN_FILE:-../preprocessed_dataset/vopd_qwen3/train.parquet}
-VAL_FILE=${VAL_FILE:-../preprocessed_dataset/vopd_qwen3/val.parquet}
+TRAIN_FILE=${TRAIN_FILE:-/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/preprocessed_dataset/vopd_qwen3/train.parquet}
+VAL_FILE=${VAL_FILE:-/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/preprocessed_dataset/vopd_qwen3/val.parquet}
 # ---- small smoke defaults ----
 NNODES=${NNODES:-1}
 NGPUS_PER_NODE=${NGPUS_PER_NODE:-8}
