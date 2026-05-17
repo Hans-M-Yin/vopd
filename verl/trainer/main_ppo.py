@@ -15,8 +15,10 @@
 Note that we don't combine the main with ray_trainer as ray_trainer is used by other mpain.
 """
 
+import logging
 import os
 import socket
+import time
 
 import hydra
 import ray
@@ -29,6 +31,17 @@ from verl.trainer.ppo.ray_trainer import RayPPOTrainer
 from verl.trainer.ppo.utils import need_critic, need_reference_policy
 from verl.utils.config import validate_config
 from verl.utils.device import auto_set_device, is_cuda_available
+
+logger = logging.getLogger(__name__)
+
+
+def _vopd_timing(label: str, start: float | None = None) -> float:
+    now = time.time()
+    if start is None:
+        logger.warning("VOPD_TIMING %s start=%.6f", label, now)
+    else:
+        logger.warning("VOPD_TIMING %s elapsed=%.3fs", label, now - start)
+    return now
 
 
 @hydra.main(config_path="config", config_name="ppo_trainer", version_base=None)
@@ -54,6 +67,7 @@ def run_ppo(config, task_runner_class=None) -> None:
                 model paths, and training hyperparameters.
         task_runner_class: For recipe to change TaskRunner.
     """
+    run_start = _vopd_timing("main_ppo.run_ppo")
     # Check if Ray is not initialized
     if not ray.is_initialized():
         # Initialize Ray with a local cluster configuration
@@ -72,8 +86,10 @@ def run_ppo(config, task_runner_class=None) -> None:
 
         runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs)
         ray_init_kwargs = OmegaConf.create({**ray_init_kwargs, "runtime_env": runtime_env})
+        ray_init_start = _vopd_timing("main_ppo.ray_init")
         print(f"ray init kwargs: {ray_init_kwargs}")
         ray.init(**OmegaConf.to_container(ray_init_kwargs))
+        _vopd_timing("main_ppo.ray_init", ray_init_start)
 
     if task_runner_class is None:
         task_runner_class = ray.remote(num_cpus=1)(TaskRunner)  # please make sure main_task is not scheduled on head
@@ -92,10 +108,16 @@ def run_ppo(config, task_runner_class=None) -> None:
         nsight_options = OmegaConf.to_container(
             config.global_profiler.global_tool_config.nsys.controller_nsight_options
         )
+        runner_start = _vopd_timing("main_ppo.create_task_runner")
         runner = task_runner_class.options(runtime_env={"nsight": nsight_options}).remote()
     else:
+        runner_start = _vopd_timing("main_ppo.create_task_runner")
         runner = task_runner_class.remote()
+    _vopd_timing("main_ppo.create_task_runner", runner_start)
+    runner_run_start = _vopd_timing("main_ppo.ray_get_runner_run")
     ray.get(runner.run.remote(config))
+    _vopd_timing("main_ppo.ray_get_runner_run", runner_run_start)
+    _vopd_timing("main_ppo.run_ppo", run_start)
 
     # [Optional] get the path of the timeline trace file from the configuration, default to None
     # This file is used for performance analysis
@@ -226,6 +248,7 @@ class TaskRunner:
             config: Training configuration object containing all parameters needed
                    for setting up and running the PPO training process.
         """
+        task_start = _vopd_timing("TaskRunner.run")
         # Print the initial configuration. `resolve=True` will evaluate symbolic values.
         from pprint import pprint
 
@@ -237,42 +260,61 @@ class TaskRunner:
         pprint(OmegaConf.to_container(config, resolve=True))
         OmegaConf.resolve(config)
 
+        t = _vopd_timing("TaskRunner.add_actor_rollout_worker")
         actor_rollout_cls, ray_worker_group_cls = self.add_actor_rollout_worker(config)
+        _vopd_timing("TaskRunner.add_actor_rollout_worker", t)
+        t = _vopd_timing("TaskRunner.add_critic_worker")
         self.add_critic_worker(config)
+        _vopd_timing("TaskRunner.add_critic_worker", t)
 
+        t = _vopd_timing("TaskRunner.add_reward_model_resource_pool")
         self.add_reward_model_resource_pool(config)
+        _vopd_timing("TaskRunner.add_reward_model_resource_pool", t)
 
+        t = _vopd_timing("TaskRunner.add_teacher_model_resource_pool")
         self.add_teacher_model_resource_pool(config)
+        _vopd_timing("TaskRunner.add_teacher_model_resource_pool", t)
 
         # Add a reference policy worker if KL loss or KL reward is used.
+        t = _vopd_timing("TaskRunner.add_ref_policy_worker")
         self.add_ref_policy_worker(config, actor_rollout_cls)
+        _vopd_timing("TaskRunner.add_ref_policy_worker", t)
 
         # validate config
+        t = _vopd_timing("TaskRunner.validate_config")
         validate_config(
             config=config,
             use_reference_policy=need_reference_policy(config),
             use_critic=need_critic(config),
         )
+        _vopd_timing("TaskRunner.validate_config", t)
 
         # Download the checkpoint from HDFS to the local machine.
         # `use_shm` determines whether to use shared memory, which could lead to faster model loading if turned on
+        t = _vopd_timing("TaskRunner.copy_model_to_local")
         local_path = copy_to_local(
             config.actor_rollout_ref.model.path, use_shm=config.actor_rollout_ref.model.get("use_shm", False)
         )
+        _vopd_timing("TaskRunner.copy_model_to_local", t)
 
         # Instantiate the tokenizer and processor.
         from verl.utils import hf_processor, hf_tokenizer
 
         trust_remote_code = config.data.get("trust_remote_code", False)
+        t = _vopd_timing("TaskRunner.load_tokenizer_processor")
         tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
         # Used for multimodal LLM, could be None
         processor = hf_processor(local_path, trust_remote_code=trust_remote_code, use_fast=True)
+        _vopd_timing("TaskRunner.load_tokenizer_processor", t)
 
+        t = _vopd_timing("TaskRunner.init_resource_pool_mgr")
         resource_pool_manager = self.init_resource_pool_mgr(config)
+        _vopd_timing("TaskRunner.init_resource_pool_mgr", t)
 
         from verl.utils.dataset.rl_dataset import collate_fn
 
         # Create training and validation datasets.
+        t = _vopd_timing("TaskRunner.create_train_dataset")
         train_dataset = create_rl_dataset(
             config.data.train_files,
             config.data,
@@ -281,6 +323,8 @@ class TaskRunner:
             is_train=True,
             max_samples=config.data.get("train_max_samples", -1),
         )
+        _vopd_timing("TaskRunner.create_train_dataset", t)
+        t = _vopd_timing("TaskRunner.create_val_dataset")
         val_dataset = create_rl_dataset(
             config.data.val_files,
             config.data,
@@ -289,9 +333,13 @@ class TaskRunner:
             is_train=False,
             max_samples=config.data.get("val_max_samples", -1),
         )
+        _vopd_timing("TaskRunner.create_val_dataset", t)
+        t = _vopd_timing("TaskRunner.create_train_sampler")
         train_sampler = create_rl_sampler(config.data, train_dataset)
+        _vopd_timing("TaskRunner.create_train_sampler", t)
 
         # Initialize the PPO trainer.
+        t = _vopd_timing("TaskRunner.construct_RayPPOTrainer")
         trainer = RayPPOTrainer(
             config=config,
             tokenizer=tokenizer,
@@ -304,11 +352,17 @@ class TaskRunner:
             collate_fn=collate_fn,
             train_sampler=train_sampler,
         )
+        _vopd_timing("TaskRunner.construct_RayPPOTrainer", t)
         # Initialize the workers of the trainer.
+        t = _vopd_timing("TaskRunner.trainer.init_workers")
         trainer.init_workers()
+        _vopd_timing("TaskRunner.trainer.init_workers", t)
 
         # Start the training process.
+        t = _vopd_timing("TaskRunner.trainer.fit")
         trainer.fit()
+        _vopd_timing("TaskRunner.trainer.fit", t)
+        _vopd_timing("TaskRunner.run", task_start)
 
 
 def create_rl_dataset(data_paths, data_config, tokenizer, processor, is_train=True, max_samples: int = -1):
