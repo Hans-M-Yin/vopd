@@ -603,8 +603,8 @@ class vLLMHttpServer:
                 "VOPD_TIMING VLLMAsyncServer.generate replica=%s rollout_rank=%s prompt_len=%d "
                 "max_tokens=%d output_len=%d prompt_logprobs=%s prepare=%.3fs lora=%.3fs "
                 "engine=%.3fs first_output=%.3fs stream_outputs=%d postprocess=%.3fs total=%.3fs",
-                self.replica_rank,
-                self.rollout_rank,
+                getattr(self, "replica_rank", "NA"),
+                getattr(self, "rollout_rank", "NA"),
                 len(prompt_ids),
                 requested_max_tokens,
                 len(token_ids),
