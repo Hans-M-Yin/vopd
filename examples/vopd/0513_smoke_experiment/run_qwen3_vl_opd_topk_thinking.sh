@@ -8,11 +8,11 @@
 set -xeuo pipefail
 
 # ---- user-adjustable paths ----
-STUDENT_MODEL=${STUDENT_MODEL:-../models/qwen3-vl-8b}
-TEACHER_MODEL=${TEACHER_MODEL:-../models/qwen3-vl-32b-thinking}
+STUDENT_MODEL=${STUDENT_MODEL:-/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/models/qwen3-vl-8b}
+TEACHER_MODEL=${TEACHER_MODEL:-/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/models/qwen3-vl-32b-thinking}
 
-TRAIN_FILE=${TRAIN_FILE:-../preprocessed_dataset/vopd_qwen3/train.parquet}
-VAL_FILE=${VAL_FILE:-../preprocessed_dataset/vopd_qwen3/val.parquet}
+TRAIN_FILE=${TRAIN_FILE:-/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/preprocessed_dataset/vopd_qwen3/train.parquet}
+VAL_FILE=${VAL_FILE:-/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/preprocessed_dataset/vopd_qwen3/val.parquet}
 
 # ---- single-node 8-GPU defaults ----
 NNODES=${NNODES:-1}
@@ -24,15 +24,15 @@ DISTILLATION_LOSS_MODE=${DISTILLATION_LOSS_MODE:-forward_kl_topk}
 USE_POLICY_GRADIENT=${USE_POLICY_GRADIENT:-False}
 DISTILLATION_TOPK=${DISTILLATION_TOPK:-16}
 
-TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-256}
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-128}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-32}
 MAX_PROMPT_LENGTH=${MAX_PROMPT_LENGTH:-2048}
-MAX_RESPONSE_LENGTH=${MAX_RESPONSE_LENGTH:-6000}
-PPO_MAX_TOKEN_LEN_PER_GPU=${PPO_MAX_TOKEN_LEN_PER_GPU:-16000}
+MAX_RESPONSE_LENGTH=${MAX_RESPONSE_LENGTH:-12000}
+PPO_MAX_TOKEN_LEN_PER_GPU=${PPO_MAX_TOKEN_LEN_PER_GPU:-18000}
 
 ACTOR_LR=${ACTOR_LR:-1e-6}
 
-ROLLOUT_TP=${ROLLOUT_TP:-2}
+ROLLOUT_TP=${ROLLOUT_TP:-1}
 ROLLOUT_GPU_MEM_UTIL=${ROLLOUT_GPU_MEM_UTIL:-0.7}
 TEACHER_TP=${TEACHER_TP:-2}
 TEACHER_GPU_MEM_UTIL=${TEACHER_GPU_MEM_UTIL:-0.7}
@@ -43,7 +43,7 @@ TEST_FREQ=${TEST_FREQ:-3}
 
 PROJECT_NAME=${PROJECT_NAME:-vopd}
 DATE=${DATE:-$(date +%m%d)}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-${DATE}_qwen3-vl_opd_topk_thinking_smoke_multi}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-${DATE}_qwen3-vl_opd_topk_refer_0516_extra_response_length}
 LOGGER=${LOGGER:-'["console","wandb"]'}
 EXP_NAME=${EXP_NAME:-${EXPERIMENT_NAME}}
 ROLLOUT_SAVE_PATH="./rollouts_saved/${EXP_NAME}"
@@ -94,6 +94,7 @@ TRAINER=(
     trainer.project_name=${PROJECT_NAME}
     trainer.experiment_name=${EXPERIMENT_NAME}
     trainer.rollout_data_dir="${ROLLOUT_SAVE_PATH}/train"
+    trainer.validation_data_dir="${ROLLOUT_SAVE_PATH}/val"
     trainer.n_gpus_per_node=${NGPUS_PER_NODE}
     trainer.nnodes=${NNODES}
     trainer.val_before_train=False
@@ -103,7 +104,7 @@ TRAINER=(
 )
 
 REWARD=(
-    reward.custom_reward_function.path=examples/vopd/reward_function.py
+    reward.custom_reward_function.path=/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/vopd/examples/vopd/reward_function.py
     reward.custom_reward_function.name=compute_score
 )
 
