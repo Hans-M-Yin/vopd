@@ -21,6 +21,7 @@ Utility classes for manage and request LLM servers:
 import asyncio
 import logging
 import os
+import time
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -36,6 +37,15 @@ from verl.workers.rollout.utils import update_prometheus_config
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
+
+
+def _vopd_timing(label: str, start: float | None = None) -> float:
+    now = time.time()
+    if start is None:
+        logger.warning("VOPD_TIMING %s start=%.6f", label, now)
+    else:
+        logger.warning("VOPD_TIMING %s elapsed=%.3fs", label, now - start)
+    return now
 
 DEFAULT_ROUTING_CACHE_SIZE = 10000
 
@@ -198,13 +208,19 @@ class LLMServerClient:
         Returns:
             TokenOutput | DiffusionOutput: token or diffusion output
         """
+        total_t = time.time()
+        is_teacher_request = sampling_params.get("prompt_logprobs") is not None
+        role = "teacher" if is_teacher_request else "student"
+        t = time.time()
         server_id, server = await self._acquire_server(request_id)
+        acquire_elapsed = time.time() - t
         try:
             multimodal_kwargs = {}
             if audio_data is not None:
                 multimodal_kwargs["audio_data"] = audio_data
             if mm_processor_kwargs:
                 multimodal_kwargs["mm_processor_kwargs"] = mm_processor_kwargs
+            t = time.time()
             output: TokenOutput = await server.generate.remote(
                 request_id=uuid4().hex,  # use new request_id for each turn
                 prompt_ids=prompt_ids,
@@ -214,6 +230,21 @@ class LLMServerClient:
                 **multimodal_kwargs,
                 **kwargs,
             )
+            remote_elapsed = time.time() - t
+            total_elapsed = time.time() - total_t
+            if total_elapsed > 5.0 or acquire_elapsed > 1.0:
+                logger.warning(
+                    "VOPD_TIMING LLMServerClient.generate role=%s server_id=%s prompt_len=%d "
+                    "max_tokens=%s prompt_logprobs=%s acquire=%.3fs remote=%.3fs total=%.3fs",
+                    role,
+                    server_id,
+                    len(prompt_ids),
+                    sampling_params.get("max_tokens") or sampling_params.get("max_new_tokens"),
+                    sampling_params.get("prompt_logprobs"),
+                    acquire_elapsed,
+                    remote_elapsed,
+                    total_elapsed,
+                )
             return output
         finally:
             self._release_server(server_id)

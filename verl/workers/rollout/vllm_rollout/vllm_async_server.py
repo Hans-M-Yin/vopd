@@ -17,6 +17,7 @@ import inspect
 import json
 import logging
 import os
+import time
 from pprint import pprint
 from typing import Any, Callable, Optional
 
@@ -76,6 +77,15 @@ else:
 
 logger = logging.getLogger(__file__)
 logger.setLevel(logging.INFO)
+
+
+def _vopd_timing(label: str, start: float | None = None) -> float:
+    now = time.time()
+    if start is None:
+        logger.warning("VOPD_TIMING %s start=%.6f", label, now)
+    else:
+        logger.warning("VOPD_TIMING %s elapsed=%.3fs", label, now - start)
+    return now
 
 
 class vLLMHttpServer:
@@ -456,6 +466,8 @@ class vLLMHttpServer:
         priority: int = 0,
     ) -> TokenOutput:
         """Generate sequence with token-in-token-out."""
+        total_t = time.time()
+        stage_t = time.time()
         prompt_ids = normalize_token_ids(prompt_ids)
 
         # Calculate the maximum possible new tokens based on available context space
@@ -487,6 +499,8 @@ class vLLMHttpServer:
         assert max_tokens <= max_possible_tokens, (
             f"max_tokens {max_tokens} exceeds available context space {max_possible_tokens}"
         )
+        requested_prompt_logprobs = sampling_params.get("prompt_logprobs")
+        requested_max_tokens = max_tokens
         sampling_params["logprobs"] = 0 if sampling_params.pop("logprobs", False) else None
         sampling_params.setdefault("repetition_penalty", self.config.get("repetition_penalty", 1.0))
         sampling_params = SamplingParams(max_tokens=max_tokens, **sampling_params)
@@ -506,8 +520,10 @@ class vLLMHttpServer:
             prompt = TokensPrompt(**prompt_kwargs)
         except TypeError:
             prompt = prompt_kwargs
+        prepare_elapsed = time.time() - stage_t
 
         # Add lora request
+        stage_t = time.time()
         lora_request = None
         if self.lora_as_adapter:
             # Make sure we also check that the lora is already loaded in the engine
@@ -516,7 +532,9 @@ class vLLMHttpServer:
                 lora_request = LoRARequest(
                     lora_name=VLLM_LORA_NAME, lora_int_id=VLLM_LORA_INT_ID, lora_path=VLLM_LORA_PATH
                 )
+        lora_elapsed = time.time() - stage_t
 
+        stage_t = time.time()
         generator = self.engine.generate(
             prompt=prompt,
             sampling_params=sampling_params,
@@ -527,9 +545,15 @@ class vLLMHttpServer:
 
         # Get final response
         final_res: Optional[RequestOutput] = None
+        first_token_elapsed = None
+        num_stream_outputs = 0
         async for output in generator:
+            if first_token_elapsed is None:
+                first_token_elapsed = time.time() - stage_t
+            num_stream_outputs += 1
             final_res = output
         assert final_res is not None
+        engine_elapsed = time.time() - stage_t
 
         # Handle abort case: when the request is aborted by pause_generation(abort),
         # outputs may be empty. Return empty results with stop_reason="aborted"
@@ -542,6 +566,7 @@ class vLLMHttpServer:
                 stop_reason="aborted",
             )
 
+        stage_t = time.time()
         extra_fields = {"global_steps": self.global_steps}
         extract_prompt_logprobs(
             output=final_res,
@@ -570,6 +595,28 @@ class vLLMHttpServer:
 
         if hasattr(final_res.outputs[0], "num_preempted"):
             num_preempted = final_res.outputs[0].num_preempted
+
+        postprocess_elapsed = time.time() - stage_t
+        total_elapsed = time.time() - total_t
+        if total_elapsed > 5.0:
+            logger.warning(
+                "VOPD_TIMING VLLMAsyncServer.generate replica=%s rollout_rank=%s prompt_len=%d "
+                "max_tokens=%d output_len=%d prompt_logprobs=%s prepare=%.3fs lora=%.3fs "
+                "engine=%.3fs first_output=%.3fs stream_outputs=%d postprocess=%.3fs total=%.3fs",
+                self.replica_rank,
+                self.rollout_rank,
+                len(prompt_ids),
+                requested_max_tokens,
+                len(token_ids),
+                requested_prompt_logprobs,
+                prepare_elapsed,
+                lora_elapsed,
+                engine_elapsed,
+                first_token_elapsed if first_token_elapsed is not None else -1.0,
+                num_stream_outputs,
+                postprocess_elapsed,
+                total_elapsed,
+            )
 
         return TokenOutput(
             token_ids=token_ids,
