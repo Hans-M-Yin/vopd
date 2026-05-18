@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
-import time
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -27,17 +25,6 @@ from verl.workers.config import (
     DistillationTeacherModelConfig,
 )
 from verl.workers.rollout.llm_server import LLMServerClient
-
-logger = logging.getLogger(__file__)
-
-
-def _vopd_timing(label: str, start: float | None = None) -> float:
-    now = time.time()
-    if start is None:
-        logger.warning("VOPD_TIMING %s start=%.6f", label, now)
-    else:
-        logger.warning("VOPD_TIMING %s elapsed=%.3fs", label, now - start)
-    return now
 
 
 def _get_teacher_sampling_params(
@@ -120,13 +107,11 @@ class AsyncTeacherLLMServerManager:
         routing_key: Optional[str] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute teacher log probabilities for a single unpadded sequence."""
-        total_t = time.time()
         multi_modal_data = multi_modal_data or {}
         teacher_key = self._resolve_teacher_key(routing_key)
         teacher_model_config = self.teacher_model_configs[teacher_key]
         client = self.teacher_client[teacher_key]
         sampling_params = _get_teacher_sampling_params(teacher_model_config, self.distillation_loss_config)
-        t = time.time()
         teacher_output = await client.generate(
             request_id=uuid4().hex,
             prompt_ids=sequence_ids,
@@ -136,24 +121,9 @@ class AsyncTeacherLLMServerManager:
             audio_data=multi_modal_data.get("audios"),
             mm_processor_kwargs=mm_processor_kwargs,
         )
-        generate_elapsed = time.time() - t
-        t = time.time()
         # Shapes: # S, (1 or K), where S is the response length, K is either 1 or topk depending on
         # the distillation loss settings.
         teacher_ids = torch.tensor(teacher_output.extra_fields["prompt_ids"], dtype=torch.int32)
         teacher_logprobs = torch.tensor(teacher_output.extra_fields["prompt_logprobs"])
-        tensor_elapsed = time.time() - t
         assert teacher_ids.shape[0] == teacher_logprobs.shape[0] == len(sequence_ids)
-        total_elapsed = time.time() - total_t
-        if total_elapsed > 5.0:
-            logger.warning(
-                "VOPD_TIMING TeacherManager.compute_single teacher_key=%s seq_len=%d topk=%s "
-                "generate=%.3fs tensor=%.3fs total=%.3fs",
-                teacher_key,
-                len(sequence_ids),
-                sampling_params.get("prompt_logprobs"),
-                generate_elapsed,
-                tensor_elapsed,
-                total_elapsed,
-            )
         return teacher_ids, teacher_logprobs

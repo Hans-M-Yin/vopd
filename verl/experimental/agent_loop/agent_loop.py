@@ -31,7 +31,6 @@ import asyncio
 import logging
 import os
 import random
-import time
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 from uuid import uuid4
@@ -73,15 +72,6 @@ from verl.workers.rollout.llm_server import LLMServerClient
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
-
-
-def _vopd_timing(label: str, start: float | None = None) -> float:
-    now = time.time()
-    if start is None:
-        logger.warning("VOPD_TIMING %s start=%.6f", label, now)
-    else:
-        logger.warning("VOPD_TIMING %s elapsed=%.3fs", label, now - start)
-    return now
 
 DEFAULT_ROUTING_CACHE_SIZE = 10000
 
@@ -478,7 +468,6 @@ class AgentLoopWorker:
             responses:     |<- LLM generation ->|<- tool_calls ->|<- LLM generation ->|<- padding ->|
             response_mask: | 1, 1, 1, ..., 1, 1 | 0, 0, .., 0, 0 | 1, 1, 1, ..., 1, 1 | 0, 0, ..., 0|
         """
-        total_t = _vopd_timing(f"AgentLoopWorker.generate_sequences batch_size={len(batch)}")
         config = self.rollout_config
         validate = batch.meta_info.get("validate", False)
         sampling_params = dict(
@@ -526,16 +515,13 @@ class AgentLoopWorker:
         else:
             traced_indices = set(range(len(batch)))
 
-        t = _vopd_timing("AgentLoopWorker.get_trajectory_info")
         trajectory_info = await get_trajectory_info(
             batch.meta_info.get("global_steps", -1), index.tolist(), batch.meta_info.get("validate", False)
         )
-        _vopd_timing("AgentLoopWorker.get_trajectory_info", t)
 
         # NOTE: __do_sample__ is an internal per-sample override used by REMAX combined rollout.
         # Do not forward it to concrete agent loops, which may reject unknown kwargs.
         per_sample_do_sample = batch.non_tensor_batch.get("__do_sample__")
-        t = _vopd_timing(f"AgentLoopWorker.create_tasks batch_size={len(batch)}")
         tasks = []
         for i in range(len(batch)):
             trace_this_sample = i in traced_indices
@@ -548,31 +534,11 @@ class AgentLoopWorker:
                     self._run_agent_loop(sample_sampling_params, trajectory_info[i], trace=trace_this_sample, **kwargs)
                 )
             )
-        _vopd_timing(f"AgentLoopWorker.create_tasks batch_size={len(batch)}", t)
-        t = _vopd_timing(f"AgentLoopWorker.gather_agent_loops batch_size={len(batch)}")
         outputs = await asyncio.gather(*tasks)
-        _vopd_timing(f"AgentLoopWorker.gather_agent_loops batch_size={len(batch)}", t)
-        sample_generate = [output.metrics.generate_sequences for output in outputs]
-        sample_score = [output.metrics.compute_score for output in outputs]
-        if sample_generate:
-            logger.warning(
-                "VOPD_TIMING AgentLoopWorker.sample_metrics batch_size=%d gen_min=%.3fs gen_mean=%.3fs "
-                "gen_max=%.3fs score_mean=%.3fs response_len_mean=%.1f response_len_max=%d",
-                len(batch),
-                min(sample_generate),
-                float(np.mean(sample_generate)),
-                max(sample_generate),
-                float(np.mean(sample_score)) if sample_score else 0.0,
-                float(np.mean([len(output.response_ids) for output in outputs])),
-                max(len(output.response_ids) for output in outputs),
-            )
 
-        t = _vopd_timing(f"AgentLoopWorker.postprocess_batch batch_size={len(batch)}")
         output = self._postprocess(
             outputs, input_non_tensor_batch=batch.non_tensor_batch, validate=batch.meta_info.get("validate", False)
         )
-        _vopd_timing(f"AgentLoopWorker.postprocess_batch batch_size={len(batch)}", t)
-        _vopd_timing(f"AgentLoopWorker.generate_sequences batch_size={len(batch)}", total_t)
         return output
 
     async def _run_agent_loop(
@@ -584,7 +550,6 @@ class AgentLoopWorker:
         trace: bool = True,
         **kwargs,
     ) -> _InternalAgentLoopOutput:
-        total_t = time.time()
         with rollout_trace_attr(
             step=trajectory["step"],
             sample_index=trajectory["sample_index"],
@@ -608,31 +573,11 @@ class AgentLoopWorker:
                 data_config=DictConfigWrap(self.config.data),
                 tools=ToolListWrap(self.tools),
             )
-            t = time.time()
             output: AgentLoopOutput = await agent_loop.run(sampling_params, **kwargs)
-            run_elapsed = time.time() - t
-            t = time.time()
-            result = await self._agent_loop_postprocess(output, trajectory["validate"], **kwargs)
-            postprocess_elapsed = time.time() - t
-            total_elapsed = time.time() - total_t
-            if total_elapsed > 5.0:
-                logger.warning(
-                    "VOPD_TIMING AgentLoopWorker.single_sample sample_index=%s rollout_n=%s "
-                    "agent_run=%.3fs postprocess=%.3fs total=%.3fs prompt_len=%d response_len=%d",
-                    trajectory["sample_index"],
-                    trajectory["rollout_n"],
-                    run_elapsed,
-                    postprocess_elapsed,
-                    total_elapsed,
-                    len(output.prompt_ids),
-                    len(output.response_ids),
-                )
-            return result
+            return await self._agent_loop_postprocess(output, trajectory["validate"], **kwargs)
 
     async def _agent_loop_postprocess(self, output, validate, **kwargs) -> _InternalAgentLoopOutput:
         """Perform post-processing operations on the output of each individual agent loop."""
-        total_t = time.time()
-        timings = {}
         output.extra_fields["raw_prompt"] = kwargs["raw_prompt"]
 
         # Some AgentLoop may have already computed the reward score, e.g SWE-agent.
@@ -656,7 +601,6 @@ class AgentLoopWorker:
         #   e.g., [0,0,0,0,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,0,0,0,0]
 
         # TODO(wuxibin): remove padding and use tensordict.
-        t = time.time()
         self.tokenizer.padding_side = "left"
         prompt_output = self.tokenizer.pad(
             {"input_ids": output.prompt_ids},
@@ -699,9 +643,7 @@ class AgentLoopWorker:
         response_mask = response_mask_output["input_ids"] * response_output["attention_mask"]
         attention_mask = torch.cat([prompt_output["attention_mask"], response_output["attention_mask"]], dim=1)
         input_ids = torch.cat([prompt_output["input_ids"], response_output["input_ids"]], dim=1)
-        timings["pad_and_cat"] = time.time() - t
 
-        t = time.time()
         routed_experts = None
         if output.routed_experts is not None:
             total_length = input_ids.shape[1]
@@ -728,12 +670,8 @@ class AgentLoopWorker:
                 )
 
             routed_experts[:, start_pos:end_pos] = experts_tensor.unsqueeze(0)
-        timings["routed_experts"] = time.time() - t
 
-        t = time.time()
         multi_modal_inputs = self._compute_multi_modal_inputs(output, input_ids)
-        timings["multi_modal_inputs"] = time.time() - t
-        t = time.time()
         position_ids = self._compute_position_ids(
             input_ids,
             attention_mask,
@@ -744,11 +682,7 @@ class AgentLoopWorker:
                 output.multi_modal_data.get("audios") if output.multi_modal_data else None
             ),
         )
-        timings["position_ids"] = time.time() - t
-        t = time.time()
         await self._compute_score([output], kwargs=kwargs)
-        timings["compute_score"] = time.time() - t
-        t = time.time()
         await self._compute_teacher_logprobs(
             output,
             prompt_ids=output.prompt_ids,
@@ -756,12 +690,10 @@ class AgentLoopWorker:
             validate=validate,
             sample_kwargs=kwargs,
         )
-        timings["teacher_logprobs"] = time.time() - t
         teacher_ids, teacher_logprobs = (
             output.extra_fields.pop("teacher_ids", None),
             output.extra_fields.pop("teacher_logprobs", None),
         )
-        t = time.time()
         if teacher_ids is not None and teacher_logprobs is not None:
             # TODO(wuxibin): remove padding and use tensordict.
             from verl.experimental.teacher_loop.teacher_manager import _pad_teacher_outputs
@@ -774,23 +706,6 @@ class AgentLoopWorker:
                 prompt_length=len(output.prompt_ids),
                 response_length=len(output.response_ids),
                 pad_token_id=self.tokenizer.pad_token_id,
-            )
-        timings["pad_teacher_outputs"] = time.time() - t
-        total_elapsed = time.time() - total_t
-        if total_elapsed > 5.0 or timings["teacher_logprobs"] > 5.0:
-            logger.warning(
-                "VOPD_TIMING AgentLoopWorker.postprocess_single total=%.3fs pad_cat=%.3fs "
-                "mm_inputs=%.3fs position_ids=%.3fs score=%.3fs teacher=%.3fs teacher_pad=%.3fs "
-                "prompt_len=%d response_len=%d",
-                total_elapsed,
-                timings["pad_and_cat"],
-                timings["multi_modal_inputs"],
-                timings["position_ids"],
-                timings["compute_score"],
-                timings["teacher_logprobs"],
-                timings["pad_teacher_outputs"],
-                len(output.prompt_ids),
-                len(output.response_ids),
             )
 
         return _InternalAgentLoopOutput(
@@ -1160,44 +1075,20 @@ class AgentLoopManager:
         Returns:
             DataProto: Output batch.
         """
-        total_t = _vopd_timing(f"AgentLoopManager.generate_sequences batch_size={len(prompts)}")
-        t = _vopd_timing(
-            f"AgentLoopManager.chunk batch_size={len(prompts)} workers={len(self.agent_loop_workers)}"
-        )
         chunkes = prompts.chunk(len(self.agent_loop_workers))
-        logger.warning(
-            "VOPD_TIMING AgentLoopManager.chunk_sizes sizes=%s",
-            [len(chunk) for chunk in chunkes],
-        )
-        _vopd_timing(f"AgentLoopManager.chunk batch_size={len(prompts)} workers={len(self.agent_loop_workers)}", t)
-        t = _vopd_timing(f"AgentLoopManager.worker_rpc_gather workers={len(self.agent_loop_workers)}")
         outputs = await asyncio.gather(
             *[
                 worker.generate_sequences.remote(chunk)
                 for worker, chunk in zip(self.agent_loop_workers, chunkes, strict=True)
             ]
         )
-        _vopd_timing(f"AgentLoopManager.worker_rpc_gather workers={len(self.agent_loop_workers)}", t)
-        t = _vopd_timing("AgentLoopManager.concat_outputs")
         output = DataProto.concat(outputs)
-        _vopd_timing("AgentLoopManager.concat_outputs", t)
 
         # calculate performance metrics
-        t = _vopd_timing("AgentLoopManager.performance_metrics")
         metrics = [output.meta_info.pop("metrics") for output in outputs]  # List[List[Dict[str, str]]]
         timing = self._performance_metrics(metrics, output)
-        _vopd_timing("AgentLoopManager.performance_metrics", t)
-        logger.warning(
-            "VOPD_TIMING AgentLoopManager.performance_summary gen_min=%.3fs gen_mean=%.3fs gen_max=%.3fs "
-            "preempted_mean=%.3f",
-            timing["agent_loop/generate_sequences/min"],
-            timing["agent_loop/generate_sequences/mean"],
-            timing["agent_loop/generate_sequences/max"],
-            timing["agent_loop/num_preempted/mean"],
-        )
 
         output.meta_info = {"timing": timing, **outputs[0].meta_info}
-        _vopd_timing(f"AgentLoopManager.generate_sequences batch_size={len(prompts)}", total_t)
         return output
 
     def _performance_metrics(self, metrics: list[list[dict[str, str]]], output: DataProto) -> dict[str, float]:

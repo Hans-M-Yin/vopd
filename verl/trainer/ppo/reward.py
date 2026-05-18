@@ -14,25 +14,12 @@
 from __future__ import annotations
 
 import inspect
-import logging
 import multiprocessing
-import time
 from functools import partial
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 from verl import DataProto
 from verl.utils.reward_score import get_default_compute_score
-
-logger = logging.getLogger(__name__)
-
-
-def _vopd_timing(label: str, start: float | None = None) -> float:
-    now = time.time()
-    if start is None:
-        logger.warning("VOPD_TIMING %s start=%.6f", label, now)
-    else:
-        logger.warning("VOPD_TIMING %s elapsed=%.3fs", label, now - start)
-    return now
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -90,10 +77,7 @@ def get_custom_reward_fn(config: DictConfig) -> Optional[RawRewardFn]:
 
     from verl.utils.import_utils import load_extern_object
 
-    logger.warning("VOPD_TIMING reward.get_custom_reward_fn module_path=%r fn_name=%r", module_path, fn_name)
-    t = _vopd_timing("reward.load_extern_object")
     raw_fn = load_extern_object(module_path=module_path, object_name=fn_name)
-    _vopd_timing("reward.load_extern_object", t)
 
     reward_kwargs = dict(reward_fn_config.get("reward_kwargs", {}))
     if not inspect.iscoroutinefunction(raw_fn):

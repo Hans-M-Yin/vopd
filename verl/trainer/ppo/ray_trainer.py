@@ -19,9 +19,7 @@ This trainer supports model-agonistic model initialization with huggingface
 """
 
 import json
-import logging
 import os
-import time
 import uuid
 from collections import defaultdict
 from pprint import pprint
@@ -72,17 +70,6 @@ from verl.utils.tracking import ValidationGenerationsLogger
 from verl.workers.config import DistillationConfig, EngineConfig
 from verl.workers.rollout.llm_server import LLMServerManager
 from verl.workers.utils.padding import left_right_2_no_padding, no_padding_2_padding
-
-logger = logging.getLogger(__name__)
-
-
-def _vopd_timing(label: str, start: float | None = None) -> float:
-    now = time.time()
-    if start is None:
-        logger.warning("VOPD_TIMING %s start=%.6f", label, now)
-    else:
-        logger.warning("VOPD_TIMING %s elapsed=%.3fs", label, now - start)
-    return now
 
 
 def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, kl_penalty="kl"):
@@ -705,15 +692,11 @@ class RayPPOTrainer:
         1. Ray resource pools from configuration
         2. Worker groups for each role (actor, critic, etc.)
         """
-        init_start = _vopd_timing("RayPPOTrainer.init_workers")
-        t = _vopd_timing("RayPPOTrainer.create_resource_pool")
         self.resource_pool_manager.create_resource_pool()
-        _vopd_timing("RayPPOTrainer.create_resource_pool", t)
 
         self.resource_pool_to_cls = {pool: {} for pool in self.resource_pool_manager.resource_pool_dict.values()}
 
         # create actor and rollout
-        t = _vopd_timing("RayPPOTrainer.prepare_actor_rollout_cls")
         actor_role = Role.ActorRolloutRef if Role.ActorRolloutRef in self.role_worker_mapping else Role.ActorRollout
         if self.hybrid_engine:
             actor_rollout_resource_pool = self.resource_pool_manager.get_resource_pool(actor_role)
@@ -726,11 +709,9 @@ class RayPPOTrainer:
             self.resource_pool_to_cls[actor_rollout_resource_pool][str(actor_role)] = actor_rollout_cls
         else:
             raise NotImplementedError
-        _vopd_timing("RayPPOTrainer.prepare_actor_rollout_cls", t)
 
         # create critic
         if self.use_critic:
-            t = _vopd_timing("RayPPOTrainer.prepare_critic_cls")
             resource_pool = self.resource_pool_manager.get_resource_pool(Role.Critic)
 
             from verl.workers.config import CriticConfig
@@ -755,11 +736,9 @@ class RayPPOTrainer:
 
             critic_cls = RayClassWithInitArgs(cls=self.role_worker_mapping[Role.Critic], config=critic_cfg)
             self.resource_pool_to_cls[resource_pool][str(Role.Critic)] = critic_cls
-            _vopd_timing("RayPPOTrainer.prepare_critic_cls", t)
 
         # create reference policy if needed
         if self.use_reference_policy and Role.RefPolicy in self.role_worker_mapping:
-            t = _vopd_timing("RayPPOTrainer.prepare_ref_policy_cls")
             resource_pool = self.resource_pool_manager.get_resource_pool(Role.RefPolicy)
             ref_policy_cls = RayClassWithInitArgs(
                 self.role_worker_mapping[Role.RefPolicy],
@@ -767,7 +746,6 @@ class RayPPOTrainer:
                 role=str(Role.RefPolicy),
             )
             self.resource_pool_to_cls[resource_pool][str(Role.RefPolicy)] = ref_policy_cls
-            _vopd_timing("RayPPOTrainer.prepare_ref_policy_cls", t)
 
         # initialize WorkerGroup
         # NOTE: if you want to use a different resource pool for each role, which can support different parallel size,
@@ -795,7 +773,6 @@ class RayPPOTrainer:
         for resource_pool, class_dict in self.resource_pool_to_cls.items():
             if not class_dict:
                 continue
-            t = _vopd_timing(f"RayPPOTrainer.spawn_worker_group roles={list(class_dict.keys())}")
             worker_dict_cls = create_colocated_worker_cls(class_dict=class_dict)
             wg_dict = self.ray_worker_group_cls(
                 resource_pool=resource_pool,
@@ -804,10 +781,8 @@ class RayPPOTrainer:
             )
             spawn_wg = wg_dict.spawn(prefix_set=class_dict.keys())
             all_wg.update(spawn_wg)
-            _vopd_timing(f"RayPPOTrainer.spawn_worker_group roles={list(class_dict.keys())}", t)
 
         if self.use_critic:
-            t = _vopd_timing("RayPPOTrainer.critic_reset_set_loss")
             self.critic_wg = all_wg[str(Role.Critic)]
             self.critic_wg.reset()
             # assign critic loss
@@ -817,10 +792,8 @@ class RayPPOTrainer:
 
             value_loss_ = partial(value_loss, config=orig_critic_cfg)
             self.critic_wg.set_loss_fn(value_loss_)
-            _vopd_timing("RayPPOTrainer.critic_reset_set_loss", t)
 
         if self.use_reference_policy and not self.ref_in_actor:
-            t = _vopd_timing("RayPPOTrainer.init_ref_policy_model")
             if str(Role.RefPolicy) in all_wg:
                 self.ref_policy_wg = all_wg[str(Role.RefPolicy)]
                 self.ref_policy_wg.init_model()
@@ -828,13 +801,10 @@ class RayPPOTrainer:
                 # Model engine: ActorRolloutRefWorker
                 assert str(Role.ActorRolloutRef) in all_wg, f"{all_wg.keys()=}"
                 self.ref_policy_wg = all_wg[str(Role.ActorRolloutRef)]
-            _vopd_timing("RayPPOTrainer.init_ref_policy_model", t)
 
         # we should create rollout at the end so that vllm can have a better estimation of kv cache memory
         self.actor_rollout_wg = all_wg[str(actor_role)]
-        t = _vopd_timing("RayPPOTrainer.actor_rollout_init_model")
         self.actor_rollout_wg.init_model()
-        _vopd_timing("RayPPOTrainer.actor_rollout_init_model", t)
 
         if self.ref_in_actor:
             self.ref_policy_wg = self.actor_rollout_wg
@@ -846,12 +816,10 @@ class RayPPOTrainer:
         # reward model (colocate or standalone): get resource_pool
         # no reward model: resource_pool = None
         resource_pool = self.resource_pool_manager.get_resource_pool(Role.RewardModel) if self.use_rm else None
-        t = _vopd_timing("RayPPOTrainer.create_reward_loop_manager")
         self.reward_loop_manager = RewardLoopManager(
             config=self.config,
             rm_resource_pool=resource_pool,
         )
-        _vopd_timing("RayPPOTrainer.create_reward_loop_manager", t)
 
         # create async rollout manager and request scheduler
         # Note: mode is always "async" since sync mode is deprecated
@@ -862,13 +830,11 @@ class RayPPOTrainer:
             from verl.experimental.teacher_loop import MultiTeacherModelManager
 
             teacher_resource_pool = self.resource_pool_manager.get_resource_pool(Role.TeacherModel)
-            t = _vopd_timing("RayPPOTrainer.create_teacher_model_manager")
             self.teacher_model_manager = MultiTeacherModelManager(
                 config=self.config,
                 resource_pool=teacher_resource_pool,
             )
             self.distillation_config: DistillationConfig = omega_conf_to_dataclass(self.config.distillation)
-            _vopd_timing("RayPPOTrainer.create_teacher_model_manager", t)
         else:
             self.teacher_model_manager = None
             self.distillation_config = None
@@ -885,25 +851,21 @@ class RayPPOTrainer:
         # two conditions satisfied: (1) no reward model, or (2) reward model with extra resource pool
         enable_agent_reward_loop = not self.use_rm or self.config.reward.reward_model.enable_resource_pool
 
-        t = _vopd_timing("RayPPOTrainer.create_llm_server_manager")
         self.llm_server_manager = LLMServerManager.create(
             config=self.config, worker_group=self.actor_rollout_wg, rollout_resource_pool=actor_rollout_resource_pool
         )
-        _vopd_timing("RayPPOTrainer.create_llm_server_manager", t)
 
         # if enable_agent_reward_loop, we directly pass reward_loop_workers to agent loop manager
         # to stream reward computation with actor rollout
         # To stream teacher computation with actor rollout, we instead pass the full manager so that the
         # teacher loop workers can sleep/wake together with rollout workers
         reward_loop_worker_handles = self.reward_loop_manager.reward_loop_workers if enable_agent_reward_loop else None
-        t = _vopd_timing("RayPPOTrainer.create_agent_loop_manager")
         self.async_rollout_manager = AgentLoopManager.create(
             config=self.config,
             llm_client=self.llm_server_manager.get_client(),
             teacher_client=self.teacher_model_manager.get_client() if self.use_teacher_policy else None,
             reward_loop_worker_handles=reward_loop_worker_handles,
         )
-        _vopd_timing("RayPPOTrainer.create_agent_loop_manager", t)
 
         checkpoint_engine_config = omega_conf_to_dataclass(self.config.actor_rollout_ref.rollout.checkpoint_engine)
         # Support custom CheckpointEngineManager via config
@@ -912,19 +874,14 @@ class RayPPOTrainer:
             CheckpointEngineManager = load_class_from_fqn(checkpoint_manager_class_fqn, "CheckpointEngineManager")
         else:
             from verl.checkpoint_engine import CheckpointEngineManager
-        t = _vopd_timing("RayPPOTrainer.create_checkpoint_manager")
         self.checkpoint_manager = CheckpointEngineManager(
             config=checkpoint_engine_config,
             trainer=self.actor_rollout_wg,
             replicas=self.llm_server_manager.get_replicas(),
         )
-        _vopd_timing("RayPPOTrainer.create_checkpoint_manager", t)
 
         # sleep all replicas to load checkpoint
-        t = _vopd_timing("RayPPOTrainer.sleep_replicas_after_init")
         self.checkpoint_manager.sleep_replicas()
-        _vopd_timing("RayPPOTrainer.sleep_replicas_after_init", t)
-        _vopd_timing("RayPPOTrainer.init_workers", init_start)
 
     def _save_checkpoint(self):
         from verl.utils.fs import local_mkdir_safe
@@ -1321,38 +1278,29 @@ class RayPPOTrainer:
         to construct the PPO dataflow.
         The light-weight advantage computation is done on the driver process.
         """
-        fit_start = _vopd_timing("RayPPOTrainer.fit")
         from omegaconf import OmegaConf
 
         from verl.utils.tracking import Tracking
 
-        t = _vopd_timing("RayPPOTrainer.fit.create_tracking")
         logger = Tracking(
             project_name=self.config.trainer.project_name,
             experiment_name=self.config.trainer.experiment_name,
             default_backend=self.config.trainer.logger,
             config=OmegaConf.to_container(self.config, resolve=True),
         )
-        _vopd_timing("RayPPOTrainer.fit.create_tracking", t)
 
         self.global_steps = 0
 
         # load checkpoint and update weights before doing anything
-        t = _vopd_timing("RayPPOTrainer.fit.load_checkpoint")
         self._load_checkpoint()
-        _vopd_timing("RayPPOTrainer.fit.load_checkpoint", t)
-        t = _vopd_timing("RayPPOTrainer.fit.initial_update_weights")
         self.checkpoint_manager.update_weights(self.global_steps)
-        _vopd_timing("RayPPOTrainer.fit.initial_update_weights", t)
 
         current_epoch = self.global_steps // len(self.train_dataloader)
 
         # perform validation before training
         # currently, we only support validation using the reward_function.
         if self.config.trainer.get("val_before_train", True):
-            t = _vopd_timing("RayPPOTrainer.fit.val_before_train")
             val_metrics = self._validate()
-            _vopd_timing("RayPPOTrainer.fit.val_before_train", t)
             assert val_metrics, f"{val_metrics=}"
             pprint(f"Initial validation metrics: {val_metrics}")
             logger.log(data=val_metrics, step=self.global_steps)
@@ -1381,11 +1329,8 @@ class RayPPOTrainer:
 
         for epoch in range(current_epoch, self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
-                step_wall_start = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.wall")
                 if hasattr(self.actor_rollout_wg, "async_calls_finalize_fn_exec"):
-                    t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.async_finalize")
                     self.actor_rollout_wg.async_calls_finalize_fn_exec(blocking=False)
-                    _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.async_finalize", t)
                 metrics = {}
                 timing_raw = {}
 
@@ -1430,12 +1375,8 @@ class RayPPOTrainer:
                     with marked_timer("gen", timing_raw, color="red"):
                         if curr_step_profile:
                             self.llm_server_manager.start_profile()
-                        t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.generate_sequences")
                         combined_gen_output = self.async_rollout_manager.generate_sequences(combined_gen_batch)
-                        _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.generate_sequences", t)
-                        t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.sleep_replicas_after_gen")
                         self.checkpoint_manager.sleep_replicas()
-                        _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.sleep_replicas_after_gen", t)
                         if curr_step_profile:
                             self.llm_server_manager.stop_profile()
 
@@ -1485,15 +1426,11 @@ class RayPPOTrainer:
                     with marked_timer("reward", timing_raw, color="yellow"):
                         # compute reward model score
                         if self.use_rm and "rm_scores" not in batch.batch.keys():
-                            t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.compute_reward_colocate")
                             batch_reward = self._compute_reward_colocate(batch)
-                            _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.compute_reward_colocate", t)
                             batch = batch.union(batch_reward)
 
                         # extract reward_tensor and reward_extra_infos_dict for training
-                        t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.extract_reward")
                         reward_tensor, reward_extra_infos_dict = extract_reward(batch)
-                        _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.extract_reward", t)
 
                     # Operating Mode Selection:
                     # - Bypass mode: Sets old_log_probs = rollout_log_probs (2 policies: π_rollout, π_θ)
@@ -1511,9 +1448,7 @@ class RayPPOTrainer:
                         )
                     else:  # Recompute old_log_probs
                         with marked_timer("old_log_prob", timing_raw, color="blue"):
-                            t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.compute_old_log_prob")
                             old_log_prob, old_log_prob_mfu = self._compute_old_log_prob(batch)
-                            _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.compute_old_log_prob", t)
                             entropys = old_log_prob.batch["entropys"]
                             response_masks = batch.batch["response_mask"]
                             actor_config = self.config.actor_rollout_ref.actor
@@ -1549,17 +1484,13 @@ class RayPPOTrainer:
                     if self.use_reference_policy:
                         # compute reference log_prob
                         with marked_timer(str(Role.RefPolicy), timing_raw, color="olive"):
-                            t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.compute_ref_log_prob")
                             ref_log_prob = self._compute_ref_log_prob(batch)
-                            _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.compute_ref_log_prob", t)
                             batch = batch.union(ref_log_prob)
 
                     # compute values
                     if self.use_critic:
                         with marked_timer("values", timing_raw, color="cyan"):
-                            t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.compute_values")
                             values = self._compute_values(batch)
-                            _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.compute_values", t)
                             batch = batch.union(values)
 
                     with marked_timer("adv", timing_raw, color="brown"):
@@ -1599,7 +1530,6 @@ class RayPPOTrainer:
                             "norm_adv_by_std_in_grpo", True
                         )  # GRPO adv normalization factor
 
-                        t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.compute_advantage")
                         batch = compute_advantage(
                             batch,
                             adv_estimator=self.config.algorithm.adv_estimator,
@@ -1609,14 +1539,11 @@ class RayPPOTrainer:
                             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
                             config=self.config.algorithm,
                         )
-                        _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.compute_advantage", t)
 
                     # update critic
                     if self.use_critic:
                         with marked_timer("update_critic", timing_raw, color="pink"):
-                            t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.update_critic")
                             critic_output = self._update_critic(batch)
-                            _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.update_critic", t)
                         critic_output_metrics = reduce_metrics(critic_output.meta_info["metrics"])
                         metrics.update(critic_output_metrics)
 
@@ -1627,9 +1554,7 @@ class RayPPOTrainer:
                     else:
                         # update actor
                         with marked_timer("update_actor", timing_raw, color="red"):
-                            t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.update_actor")
                             actor_output = self._update_actor(batch)
-                            _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.update_actor", t)
 
                         # Check if the ESI (Elastic Server Instance)/training plan is close to expiration.
                         esi_close_to_expiration = should_save_ckpt_esi(
@@ -1655,9 +1580,7 @@ class RayPPOTrainer:
 
                         # update weights from trainer to rollout
                         with marked_timer("update_weights", timing_raw, color="red"):
-                            t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.update_weights")
                             self.checkpoint_manager.update_weights(self.global_steps)
-                            _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.update_weights", t)
 
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
@@ -1672,9 +1595,7 @@ class RayPPOTrainer:
                     is_last_step or self.global_steps % self.config.trainer.test_freq == 0
                 ):
                     with marked_timer("testing", timing_raw, color="green"):
-                        t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.validate")
                         val_metrics: dict = self._validate()
-                        _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.validate", t)
                         if is_last_step:
                             last_val_metrics = val_metrics
                     metrics.update(val_metrics)
@@ -1725,10 +1646,7 @@ class RayPPOTrainer:
                 # Note: mismatch metrics (KL, PPL, etc.) are collected at line 1179 after advantage computation
 
                 # TODO: make a canonical logger that supports various backend
-                t = _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.logger_log")
                 logger.log(data=metrics, step=self.global_steps)
-                _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.logger_log", t)
-                _vopd_timing(f"RayPPOTrainer.step_{self.global_steps}.wall", step_wall_start)
 
                 progress_bar.update(1)
                 self.global_steps += 1
