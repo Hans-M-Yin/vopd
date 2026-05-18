@@ -8,11 +8,12 @@
 set -xeuo pipefail
 
 # ---- user-adjustable paths ----
-STUDENT_MODEL=${STUDENT_MODEL:-../models/qwen3-vl-8b}
-TEACHER_MODEL=${TEACHER_MODEL:-../models/qwen3-vl-32b-thinking}
+STUDENT_MODEL=${STUDENT_MODEL:-/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/models/qwen3-vl-8b}
+TEACHER_MODEL=${TEACHER_MODEL:-/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/models/qwen3-vl-32b-thinking}
 
-TRAIN_FILE=${TRAIN_FILE:-../preprocessed_dataset/vopd_qwen3/train.parquet}
-VAL_FILE=${VAL_FILE:-../preprocessed_dataset/vopd_qwen3/val.parquet}
+TRAIN_FILE=${TRAIN_FILE:-/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/preprocessed_dataset/vopd_qwen3/train.parquet}
+VAL_FILE=${VAL_FILE:-/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/preprocessed_dataset/vopd_qwen3/val.parquet}
+
 
 # ---- single-node 8-GPU defaults ----
 NNODES=${NNODES:-1}
@@ -103,7 +104,7 @@ TRAINER=(
 )
 
 REWARD=(
-    reward.custom_reward_function.path=examples/vopd/reward_function.py
+    reward.custom_reward_function.path=/mnt/hdfs/byte_ai_sales/user/user/yinzhihan/vopd/examples/vopd/reward_function.py
     reward.custom_reward_function.name=compute_score
 )
 
